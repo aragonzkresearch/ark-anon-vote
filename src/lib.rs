@@ -1,3 +1,8 @@
+pub type ConstraintF = ark_bls12_381::Fr;
+
+pub mod voter;
+use voter::*;
+
 #[cfg(test)]
 mod tests {
     #[test]
