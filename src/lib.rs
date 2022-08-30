@@ -1,5 +1,8 @@
 pub type ConstraintF = ark_bls12_381::Fr;
 
+pub mod censustree;
+use censustree::*;
+
 pub mod voter;
 use voter::*;
 
