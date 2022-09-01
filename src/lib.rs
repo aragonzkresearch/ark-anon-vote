@@ -107,7 +107,7 @@ impl ConstraintSynthesizer<ConstraintF> for AnonVote {
         // check nullifier
         let mut hash_input = Vec::new();
         hash_input.extend_from_slice(&sk.to_bytes()?);
-        hash_input.extend_from_slice(&process_id.to_bytes_le());
+        hash_input.extend_from_slice(&process_id.to_bytes()?);
         let comp_nullifier = LeafHashGadget::evaluate(&parameters.leaf_crh_params, &hash_input)?;
         comp_nullifier.enforce_equal(&nullifier)?;
 
@@ -153,7 +153,7 @@ mod test {
         let leaf_crh_params = <LeafHash as CRH>::setup(&mut rng).unwrap();
         let two_to_one_crh_params = <TwoToOneHash as TwoToOneCRH>::setup(&mut rng).unwrap();
 
-        let process_id: ProcessId = ProcessId(1);
+        let process_id: ProcessId = ConstraintF::from(1);
         let n_voters = 10;
         // generate voters data
         let sk = ConstraintF::rand(&mut rng);
@@ -212,5 +212,74 @@ mod test {
             n_voters,
             cs.num_constraints()
         );
+    }
+
+    #[test]
+    fn test_snark_proof_and_verification() {
+        let mut rng = ark_std::test_rng();
+        let leaf_crh_params = <LeafHash as CRH>::setup(&mut rng).unwrap();
+        let two_to_one_crh_params = <TwoToOneHash as TwoToOneCRH>::setup(&mut rng).unwrap();
+
+        let process_id: ProcessId = ConstraintF::from(1);
+        let n_voters = 10;
+        // generate voters data
+        let sk = ConstraintF::rand(&mut rng);
+        let voter = Voter::new(&leaf_crh_params, sk);
+        let nullifier = voter.nullifier(&leaf_crh_params, process_id);
+
+        let vote = 0_u8;
+        // TODO check vote validity
+
+        let height = ark_std::log2(n_voters);
+        let mut tree =
+            CensusTree::blank(&leaf_crh_params, &two_to_one_crh_params, height as usize).unwrap();
+
+        tree.update(0, &voter.to_bytes_le()).unwrap();
+
+        let proof = tree.generate_proof(0).unwrap();
+        let root = tree.root();
+
+        // native proof verification
+        assert!(proof
+            .verify(
+                &leaf_crh_params,
+                &two_to_one_crh_params,
+                &root,
+                &voter.to_bytes_le()
+            )
+            .unwrap());
+
+        // circuit verification
+        let circuit = AnonVote {
+            parameters: Parameters {
+                leaf_crh_params,
+                two_to_one_crh_params,
+            },
+            root: Some(root),
+            process_id: Some(process_id),
+            nullifier: Some(nullifier),
+            vote: None,
+            sk: Some(sk),
+            proof: Some(proof),
+        };
+        let circuit_cs = circuit.clone();
+
+        use ark_bls12_381::Bls12_381;
+        use ark_groth16::Groth16;
+        use ark_snark::SNARK;
+
+        let (pk, vk) = Groth16::<Bls12_381>::circuit_specific_setup(circuit_cs, &mut rng).unwrap();
+
+        let proof = Groth16::prove(&pk, circuit.clone(), &mut rng).unwrap();
+
+        let public_input = [
+            circuit.root.unwrap(),
+            circuit.process_id.unwrap(),
+            circuit.nullifier.unwrap(),
+            // circuit.vote.unwrap(),
+        ];
+
+        let valid_proof = Groth16::verify(&vk, &public_input, &proof).unwrap();
+        assert!(valid_proof);
     }
 }
