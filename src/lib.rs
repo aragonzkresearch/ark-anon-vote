@@ -6,19 +6,15 @@ use censustree::*;
 pub mod voter;
 use voter::*;
 
-// native
-use ark_std::UniformRand;
 use std::borrow::Borrow;
 
 // constraints
 use ark_r1cs_std::prelude::*;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError};
 
-use ark_crypto_primitives::crh::{
-    injective_map::{PedersenCRHCompressor, TECompressor},
-    pedersen, CRHGadget, TwoToOneCRH, CRH,
-};
+use ark_crypto_primitives::crh::{CRHGadget, TwoToOneCRH, CRH};
 
+#[derive(Clone)]
 pub struct Parameters {
     pub leaf_crh_params: <TwoToOneHash as CRH>::Parameters,
     pub two_to_one_crh_params: <TwoToOneHash as TwoToOneCRH>::Parameters,
@@ -49,6 +45,7 @@ impl AllocVar<Parameters, ConstraintF> for ParametersVar {
     }
 }
 
+#[derive(Clone)]
 pub struct AnonVote {
     pub parameters: Parameters,
 
@@ -59,9 +56,7 @@ pub struct AnonVote {
     pub vote: Option<u8>,
 
     // private inputs
-    // pub public_key: Option<VoterPublicKey>,
     pub sk: Option<ConstraintF>,
-    pub leaf: Option<Voter>,
     pub proof: Option<Proof>,
 }
 
@@ -73,9 +68,7 @@ impl AnonVote {
             process_id: None,
             nullifier: None,
             vote: None,
-            // public_key: None,
             sk: None,
-            leaf: None,
             proof: None,
         }
     }
@@ -90,27 +83,26 @@ impl ConstraintSynthesizer<ConstraintF> for AnonVote {
         let parameters =
             ParametersVar::new_constant(ark_relations::ns!(cs, "parameters"), &self.parameters)?;
 
+        // public inputs
         let root = RootVar::new_input(ark_relations::ns!(cs, "Root"), || {
             self.root.ok_or(SynthesisError::AssignmentMissing)
         })?;
-
-        let leaf = VoterVar::new_witness(ark_relations::ns!(cs, "Voter(leaf)"), || {
-            self.leaf.ok_or(SynthesisError::AssignmentMissing)
+        let process_id = ProcessIdVar::new_input(ark_relations::ns!(cs, "ProcessId"), || {
+            self.process_id.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let nullifier = NullifierVar::new_input(ark_relations::ns!(cs, "Nullifier"), || {
+            self.nullifier.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         let proof = ProofVar::new_witness(ark_relations::ns!(cs, "Proof(path)"), || {
             self.proof.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
-        let process_id = ProcessIdVar::new_witness(ark_relations::ns!(cs, "ProcessId"), || {
-            self.process_id.ok_or(SynthesisError::AssignmentMissing)
-        })?;
         let sk = SecretKeyVar::new_witness(ark_relations::ns!(cs, "SecretKey"), || {
             self.sk.ok_or(SynthesisError::AssignmentMissing)
         })?;
-        let nullifier = NullifierVar::new_witness(ark_relations::ns!(cs, "Nullifier"), || {
-            self.nullifier.ok_or(SynthesisError::AssignmentMissing)
-        })?;
+
+        // TODO check vote value
 
         // check nullifier
         let mut hash_input = Vec::new();
@@ -119,12 +111,10 @@ impl ConstraintSynthesizer<ConstraintF> for AnonVote {
         let comp_nullifier = LeafHashGadget::evaluate(&parameters.leaf_crh_params, &hash_input)?;
         comp_nullifier.enforce_equal(&nullifier)?;
 
-        // check voting_key == hash(sk)
-        // TODO voting_key will be obtained from sk, not as input
+        // obtain voting_key from sk
         let mut hash_input = Vec::new();
         hash_input.extend_from_slice(&sk.to_bytes()?);
-        let comp_leaf = LeafHashGadget::evaluate(&parameters.leaf_crh_params, &hash_input)?;
-        comp_leaf.enforce_equal(&leaf.voting_key)?;
+        let voting_key = LeafHashGadget::evaluate(&parameters.leaf_crh_params, &hash_input)?;
 
         // verify merkle proof
         proof
@@ -132,7 +122,7 @@ impl ConstraintSynthesizer<ConstraintF> for AnonVote {
                 &parameters.leaf_crh_params,
                 &parameters.two_to_one_crh_params,
                 &root,
-                &leaf.to_bytes_le().as_slice(),
+                &voting_key.to_bytes().unwrap().as_slice(),
             )?
             .enforce_equal(&Boolean::TRUE)?;
 
@@ -152,8 +142,10 @@ mod tests {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
-    use tracing_subscriber::layer::SubscriberExt;
+    use ark_relations::r1cs::ConstraintSystem;
+    use ark_std::UniformRand;
+    // use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
+    // use tracing_subscriber::layer::SubscriberExt;
 
     #[test]
     fn test_constraint_system() {
@@ -170,6 +162,7 @@ mod test {
         let nullifier = voter.nullifier(&leaf_crh_params, process_id);
 
         let vote = 0_u8.to_le_bytes();
+        // TODO check vote validity
 
         let height = ark_std::log2(n_voters);
         let mut tree =
@@ -200,9 +193,7 @@ mod test {
             process_id: Some(process_id),
             nullifier: Some(nullifier),
             vote: None,
-            // public_key: Some(pk),
             sk: Some(sk),
-            leaf: Some(voter),
             proof: Some(proof),
         };
 
@@ -216,5 +207,10 @@ mod test {
         circuit.generate_constraints(cs.clone()).unwrap();
         let is_satisfied = cs.is_satisfied().unwrap();
         assert!(is_satisfied);
+        println!(
+            "n_voters={:?}, num_cnstraints={:?}",
+            n_voters,
+            cs.num_constraints()
+        );
     }
 }
