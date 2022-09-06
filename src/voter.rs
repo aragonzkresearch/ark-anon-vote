@@ -1,6 +1,4 @@
 use crate::ConstraintF;
-use ark_crypto_primitives::signature::schnorr::{constraints::PublicKeyVar, PublicKey};
-use ark_ed_on_bls12_381::{constraints::EdwardsVar, EdwardsProjective};
 use ark_r1cs_std::prelude::*;
 use ark_relations::r1cs::{Namespace, SynthesisError};
 use std::borrow::Borrow;
@@ -17,8 +15,8 @@ pub type ProcessIdVar = FpVar<ConstraintF>;
 pub type SecretKey = ConstraintF;
 pub type SecretKeyVar = FpVar<ConstraintF>;
 
-pub type VoterPublicKey = PublicKey<EdwardsProjective>;
-pub type VoterPublicKeyVar = PublicKeyVar<EdwardsProjective, EdwardsVar>;
+pub type Vote = ConstraintF;
+pub type VoteVar = FpVar<ConstraintF>;
 
 pub type VotingKey = <LeafHash as CRH>::Output;
 pub type VotingKeyVar = <LeafHashGadget as CRHGadget<LeafHash, ConstraintF>>::OutputVar;

@@ -9,8 +9,11 @@ use voter::*;
 use std::borrow::Borrow;
 
 // constraints
+use ark_ff::fields::Fp256;
+use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::prelude::*;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError};
+use std::ops::{Mul, Sub};
 
 use ark_crypto_primitives::crh::{CRHGadget, TwoToOneCRH, CRH};
 
@@ -53,10 +56,10 @@ pub struct AnonVote {
     pub root: Option<Root>,
     pub process_id: Option<ProcessId>,
     pub nullifier: Option<Nullifier>,
-    pub vote: Option<u8>,
+    pub vote: Option<Vote>,
 
     // private inputs
-    pub sk: Option<ConstraintF>,
+    pub sk: Option<SecretKey>,
     pub proof: Option<Proof>,
 }
 
@@ -93,6 +96,9 @@ impl ConstraintSynthesizer<ConstraintF> for AnonVote {
         let nullifier = NullifierVar::new_input(ark_relations::ns!(cs, "Nullifier"), || {
             self.nullifier.ok_or(SynthesisError::AssignmentMissing)
         })?;
+        let vote = VoteVar::new_input(ark_relations::ns!(cs, "Vote"), || {
+            self.vote.ok_or(SynthesisError::AssignmentMissing)
+        })?;
 
         let proof = ProofVar::new_witness(ark_relations::ns!(cs, "Proof(path)"), || {
             self.proof.ok_or(SynthesisError::AssignmentMissing)
@@ -102,7 +108,10 @@ impl ConstraintSynthesizer<ConstraintF> for AnonVote {
             self.sk.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
-        // TODO check vote value
+        // check vote value (binary check (v*(v-1)==0))
+        let zero: FpVar<ConstraintF> = FpVar::Constant(Fp256::from(0));
+        let one: FpVar<ConstraintF> = FpVar::Constant(Fp256::from(1));
+        vote.clone().mul(vote.sub(&one)).enforce_equal(&zero)?;
 
         // check nullifier
         let mut hash_input = Vec::new();
@@ -131,15 +140,6 @@ impl ConstraintSynthesizer<ConstraintF> for AnonVote {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
-
-#[cfg(test)]
 mod test {
     use super::*;
     use ark_relations::r1cs::ConstraintSystem;
@@ -147,22 +147,19 @@ mod test {
     // use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
     // use tracing_subscriber::layer::SubscriberExt;
 
-    #[test]
-    fn test_constraint_system() {
+    fn generate_test_data(n_voters: usize) -> AnonVote {
         let mut rng = ark_std::test_rng();
         let leaf_crh_params = <LeafHash as CRH>::setup(&mut rng).unwrap();
         let two_to_one_crh_params = <TwoToOneHash as TwoToOneCRH>::setup(&mut rng).unwrap();
 
         let process_id: ProcessId = ConstraintF::from(1);
-        let n_voters = 10;
         // generate voters data
         let sk = ConstraintF::rand(&mut rng);
 
         let voter = Voter::new(&leaf_crh_params, sk);
         let nullifier = voter.nullifier(&leaf_crh_params, process_id);
 
-        let vote = 0_u8.to_le_bytes();
-        // TODO check vote validity
+        let vote: Vote = ConstraintF::from(1);
 
         let height = ark_std::log2(n_voters);
         let mut tree =
@@ -192,10 +189,17 @@ mod test {
             root: Some(root),
             process_id: Some(process_id),
             nullifier: Some(nullifier),
-            vote: None,
+            vote: Some(vote),
             sk: Some(sk),
             proof: Some(proof),
         };
+        return circuit;
+    }
+
+    #[test]
+    fn test_constraint_system() {
+        let n_voters = 10;
+        let circuit = generate_test_data(n_voters);
 
         // some boilerplate that helps with debugging
         // let mut layer = ConstraintLayer::default();
@@ -216,57 +220,14 @@ mod test {
 
     #[test]
     fn test_snark_proof_and_verification() {
-        let mut rng = ark_std::test_rng();
-        let leaf_crh_params = <LeafHash as CRH>::setup(&mut rng).unwrap();
-        let two_to_one_crh_params = <TwoToOneHash as TwoToOneCRH>::setup(&mut rng).unwrap();
-
-        let process_id: ProcessId = ConstraintF::from(1);
         let n_voters = 10;
-        // generate voters data
-        let sk = ConstraintF::rand(&mut rng);
-        let voter = Voter::new(&leaf_crh_params, sk);
-        let nullifier = voter.nullifier(&leaf_crh_params, process_id);
-
-        let vote = 0_u8;
-        // TODO check vote validity
-
-        let height = ark_std::log2(n_voters);
-        let mut tree =
-            CensusTree::blank(&leaf_crh_params, &two_to_one_crh_params, height as usize).unwrap();
-
-        tree.update(0, &voter.to_bytes_le()).unwrap();
-
-        let proof = tree.generate_proof(0).unwrap();
-        let root = tree.root();
-
-        // native proof verification
-        assert!(proof
-            .verify(
-                &leaf_crh_params,
-                &two_to_one_crh_params,
-                &root,
-                &voter.to_bytes_le()
-            )
-            .unwrap());
-
-        // circuit verification
-        let circuit = AnonVote {
-            parameters: Parameters {
-                leaf_crh_params,
-                two_to_one_crh_params,
-            },
-            root: Some(root),
-            process_id: Some(process_id),
-            nullifier: Some(nullifier),
-            vote: None,
-            sk: Some(sk),
-            proof: Some(proof),
-        };
+        let circuit = generate_test_data(n_voters);
         let circuit_cs = circuit.clone();
 
         use ark_bls12_381::Bls12_381;
         use ark_groth16::Groth16;
         use ark_snark::SNARK;
+        let mut rng = ark_std::test_rng();
 
         let (pk, vk) = Groth16::<Bls12_381>::circuit_specific_setup(circuit_cs, &mut rng).unwrap();
 
@@ -276,7 +237,7 @@ mod test {
             circuit.root.unwrap(),
             circuit.process_id.unwrap(),
             circuit.nullifier.unwrap(),
-            // circuit.vote.unwrap(),
+            circuit.vote.unwrap(),
         ];
 
         let valid_proof = Groth16::verify(&vk, &public_input, &proof).unwrap();

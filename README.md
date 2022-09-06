@@ -4,7 +4,7 @@ Experimental implementation of onchain anonymous voting using [arkworks](https:/
 
 
 ## Scheme
-The main idea is that users send their vote + zk-proof to the smart contract, proving that they belong to the census and that their vote has not been already casted.
+The main idea is that users send their vote + zk-proof to the smart contract, proving that they belong to the census (without revealing who they are) and that their vote has not been already casted.
 
 Each user generates a random *SecretKey*, and computes the corresponding *VotingKey* by hashing it.
 The census creator adds all the *VotingKeys* as leafs in the census tree, obtaining the *CensusRoot*:
@@ -20,10 +20,12 @@ Constraints system (grey background indicates public inputs):
 ## Usage
 Import this lib:
 ```
-anon-vote = { git = "https://github.com/aragonzkresearch/ark-anon-vote" }
+ark-anon-vote = { git = "https://github.com/aragonzkresearch/ark-anon-vote" }
 ```
 
 ```rust
+use ark_anon_vote::*;
+
 // set the process_id
 let process_id: ProcessId = ConstraintF::from(1);
 // set number of max voters
