@@ -8,11 +8,15 @@ use ark_crypto_primitives::crh::{
     },
     pedersen, CRHGadget, TwoToOneCRH, TwoToOneCRHGadget, CRH,
 };
-use ark_crypto_primitives::merkle_tree::{constraints::PathVar, Config, MerkleTree, Path};
+use ark_crypto_primitives::{
+    merkle_tree::{constraints::PathVar, Config, MerkleTree, Path},
+    Error as MTError,
+};
 use ark_ed_on_bls12_381::{constraints::EdwardsVar, EdwardsProjective};
-// use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, prelude::Boolean, uint32::UInt32};
 use ark_r1cs_std::prelude::*;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+
+pub type Error = MTError;
 
 pub type LeafHash = PedersenCRHCompressor<EdwardsProjective, TECompressor, LeafWindow>;
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -66,8 +70,7 @@ pub type TwoToOneHashParamsVar =
     <TwoToOneHashGadget as TwoToOneCRHGadget<TwoToOneHash, ConstraintF>>::ParametersVar;
 
 pub type RootVar = <TwoToOneHashGadget as TwoToOneCRHGadget<TwoToOneHash, ConstraintF>>::OutputVar;
-pub type ProofVar =
-    PathVar<crate::CensusTreeConfig, LeafHashGadget, TwoToOneHashGadget, ConstraintF>;
+pub type ProofVar = PathVar<CensusTreeConfig, LeafHashGadget, TwoToOneHashGadget, ConstraintF>;
 
 pub struct CensusTreeVerification {
     // parameters

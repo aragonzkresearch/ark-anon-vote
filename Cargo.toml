@@ -2,6 +2,7 @@
 name = "ark-anon-vote"
 version = "0.0.1"
 edition = "2021"
+repository = "https://github.com/aragonzkresearch/ark-anon-vote"
 
 [dependencies]
 ark-ff = { version = "^0.3.0", default-features = false }

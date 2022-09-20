@@ -1,6 +1,6 @@
 # ark-anon-vote [![Test](https://github.com/aragonzkresearch/ark-anon-vote/workflows/Test/badge.svg)](https://github.com/aragonzkresearch/ark-anon-vote/actions?query=workflow%3ATest) [![Clippy](https://github.com/aragonzkresearch/ark-anon-vote/workflows/Clippy/badge.svg)](https://github.com/aragonzkresearch/ark-anon-vote/actions?query=workflow%3AClippy)
 
-Experimental implementation of onchain anonymous voting using [arkworks](https://arkworks.rs), following a similar design done in [vocdoni/zk-franchise-proof](https://github.com/vocdoni/zk-franchise-proof-circuit) and [aragonzkresearch/oav](https://github.com/aragonzkresearch/ovote/blob/main/circuits/src/oav.circom) (which are done in Circom).
+Experimental implementation of onchain anonymous voting using [arkworks](https://github.com/arkworks-rs), following a similar design done in [vocdoni/zk-franchise-proof](https://github.com/vocdoni/zk-franchise-proof-circuit) and [aragonzkresearch/oav](https://github.com/aragonzkresearch/ovote/blob/main/circuits/src/oav.circom) (which are done in Circom).
 
 
 ## Scheme
@@ -26,22 +26,22 @@ ark-anon-vote = { git = "https://github.com/aragonzkresearch/ark-anon-vote" }
 ```rust
 use ark_anon_vote::*;
 
+let parameters = Parameters::init(&mut rng);
+let av = AnonVote::<Groth16<Bls12_381>>::new(parameters.clone());
+
 // set the process_id
-let process_id: ProcessId = ConstraintF::from(1);
+let process_id: ProcessId = av.new_process_id(1 as u16);
 // set number of max voters
 let n_voters = 10;
 
 // each voter generate voter's data
-let sk = ConstraintF::rand(&mut rng);
-let voter = Voter::new(&leaf_crh_params, sk);
-let nullifier = voter.nullifier(&leaf_crh_params, process_id);
-let vote: Vote = ConstraintF::from(1);
+let voter = av.new_voter(&mut rng);
+let nullifier = voter.nullifier(process_id);
+let vote: Vote = av.new_vote(1 as u8);
 // do this for each voter
 
 // create the CensusTree
-let height = ark_std::log2(n_voters);
-let mut tree =
-      CensusTree::blank(&leaf_crh_params, &two_to_one_crh_params, height as usize).unwrap();
+let mut census = av.new_censustree(n_voters).unwrap();
 
 // add each voter VotingKey to the CensusTree
 tree.update(0, &voter.to_bytes_le()).unwrap();
@@ -49,34 +49,26 @@ tree.update(0, &voter.to_bytes_le()).unwrap();
 
 // get Census Root
 let root = tree.root();
+// get user's census proof (merkletree membership proof)
+let censusproof = census.generate_proof(0).unwrap();
 
 // prepare Voter's inputs
-let circuit = AnonVote {
-   parameters: Parameters {
-       leaf_crh_params,
-       two_to_one_crh_params,
-   },
-   root: Some(root),
-   process_id: Some(process_id),
-   nullifier: Some(nullifier),
-   vote: Some(vote),
-   sk: Some(sk),
-   proof: Some(tree.generate_proof(0).unwrap()),
-};
+let circuit =
+   av.new_circuit_instance(root, process_id, nullifier, vote, voter.sk, censusproof);
+   
+// generate circuit setup
+let (pk, vk) =
+   AnonVote::<Groth16<Bls12_381>>::circuit_setup(&mut rng, circuit.clone()).unwrap();
 
 // generate the zk-proof
-let proof = Groth16::prove(&pk, circuit, &mut rng).unwrap();
+let proof = AnonVote::<Groth16<Bls12_381>>::prove(&mut rng, pk, circuit.clone()).unwrap();
 
 // prepare the public inputs
-let public_input = [
-   circuit.root.unwrap(),
-   circuit.process_id.unwrap(),
-   circuit.nullifier.unwrap(),
-   circuit.vote.unwrap(),
-];
+let pub_inputs = circuit.public_inputs();
 
 // verify the zk-proof for the given VerificationKey and public inputs
-let valid_proof = Groth16::verify(&vk, &public_input, &proof).unwrap();
+let valid_proof = AnonVote::<Groth16<Bls12_381>>::verify(vk, proof, pub_inputs).unwrap();
 assert!(valid_proof);
 ```
+
 Check [src/lib.rs](https://github.com/aragonzkresearch/ark-anon-vote/blob/main/src/lib.rs) for more details.
